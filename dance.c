@@ -32,7 +32,7 @@ int init_dance_controller(dance_controller_t *cont)
     // Claim the dance pad
     int r = libusb_init(&cont->ctx);
     if (r != 0) {
-        lprintf(LOG_ERROR, "Cannot init lib usb\n");
+    lprintf(LOG_ERROR, "Cannot init lib usb (%d)\n", r);
         return 0;
     }
 
@@ -43,14 +43,15 @@ int init_dance_controller(dance_controller_t *cont)
     }
     lprintf(LOG_INFO, "Device found, trying to connect\n");
 
-    r = libusb_detach_kernel_driver(cont->handle, INTERFACE);
+    r = libusb_set_auto_detach_kernel_driver(cont->handle, INTERFACE);
     if (r != 0) {
-        lprintf(LOG_WARNING, "Cannot detach kernel driver\n");
+        lprintf(LOG_WARNING, "Cannot detach kernel driver (%s)\n", libusb_strerror(r));
     }
 
     r = libusb_claim_interface(cont->handle, INTERFACE);
     if (r != 0) {
-        lprintf(LOG_ERROR, "Cannot claim interface\n");
+        lprintf(LOG_ERROR, "Cannot claim interface (%s)\n", libusb_strerror(r));
+        lprintf(LOG_INFO, "You can try 'systemctl stop xboxdrv' to free the device\n");
         return 0;
     }
 
@@ -62,6 +63,8 @@ int init_dance_controller(dance_controller_t *cont)
         lprintf(LOG_ERROR, "Cannot start polling thread\n");
         return 0;
     }
+
+    lprintf(LOG_INFO, "Device connected, thread is polling\n");
 
     return 1;
 }
@@ -92,6 +95,7 @@ void free_dance_controller(dance_controller_t *cont)
     }
 
     // Release the USB device
+    libusb_release_interface(cont->handle, INTERFACE);
     libusb_close(cont->handle);
     libusb_exit(cont->ctx);
 }
