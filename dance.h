@@ -25,10 +25,10 @@ typedef struct dance_controller_t {
     libusb_context *ctx;
     /// Controller's device handle
     libusb_device_handle *handle;
+    /// Used to see if the USB has is active
+    int running;
     /// Made up of dance_state_flag_t
     int state;
-    /// Internal state
-    struct timeval last_poll;
     /// Lock for safety
     pthread_mutex_t lock;
     /// The controller is polled on its very own thread
