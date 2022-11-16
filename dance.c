@@ -8,6 +8,7 @@
 #define VENDOR_ID 0x054c
 #define PRODUCT_ID 0x0268
 #define POLL_TIME_MS 5
+#define INTERFACE 0
 
 void *dance_controller_poll_thread(void *ctx)
 {
@@ -36,8 +37,22 @@ int init_dance_controller(dance_controller_t *cont)
     }
 
     cont->handle = libusb_open_device_with_vid_pid(cont->ctx, VENDOR_ID, PRODUCT_ID);
-    libusb_detach_kernel_driver(cont->handle, 0);
-    libusb_claim_interface(cont->handle, 0);
+    if (cont->handle == NULL) {
+        lprintf(LOG_ERROR, "Cannot connect to controller\n");
+        return 0;
+    }
+    lprintf(LOG_INFO, "Device found, trying to connect\n");
+
+    r = libusb_detach_kernel_driver(cont->handle, INTERFACE);
+    if (r != 0) {
+        lprintf(LOG_WARNING, "Cannot detach kernel driver\n");
+    }
+
+    r = libusb_claim_interface(cont->handle, INTERFACE);
+    if (r != 0) {
+        lprintf(LOG_ERROR, "Cannot claim interface\n");
+        return 0;
+    }
 
     // Start the thread
     pthread_mutex_t minit = PTHREAD_MUTEX_INITIALIZER;

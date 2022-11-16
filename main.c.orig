@@ -1,7 +1,24 @@
 #include <stdlib.h>
 #include <stdio.h>
+#include "./dance.h"
 
 int main(int argc, char **argv)
 {
-  return 0;
+    dance_controller_t controller;
+    int s = init_dance_controller(&controller);
+    if (!s) {
+    lprintf(LOG_ERROR, "Cannot init controller\n");
+    return 1;
+  }
+
+    for (;;) {
+    int cont_state;
+    if (!dance_controller_state(&cont, &cont_state)) {
+      lprintf(LOG_ERROR, "Controller disconnect\n");
+      break;
+    }
+  }
+
+    free_dance_controller(&controller);
+    return 0;
 }
