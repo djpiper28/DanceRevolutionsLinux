@@ -75,7 +75,7 @@ int init_dance_controller(dance_controller_t *cont)
     }
     lprintf(LOG_INFO, "Device found, trying to connect\n");
 
-    r = libusb_set_auto_detach_kernel_driver(cont->handle, INTERFACE);
+    r = libusb_detach_kernel_driver(cont->handle, INTERFACE);
     if (r != 0) {
         lprintf(LOG_WARNING, "Cannot detach kernel driver (%s)\n", libusb_strerror(r));
     }
@@ -107,7 +107,7 @@ int dance_controller_state(dance_controller_t *cont, int *cont_state)
     int ret = 1;
 
     pthread_mutex_lock(&cont->lock);
-    ret = cont->state;
+    *cont_state = cont->state;
     if (cont->running == 0) {
         ret = 0;
     }
