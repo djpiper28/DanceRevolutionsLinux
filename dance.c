@@ -10,8 +10,14 @@
 #define VENDOR_ID 0x054c
 #define PRODUCT_ID 0x0268
 #define INTERFACE 0
-#define TIMEOUT 50
+#define TIMEOUT 100
 #define PACKET_SIZE (8 * 8)
+
+// Config stuffs, source https://github.com/madsci1016/Arduino-PS2X/blob/master/PS2X_lib/PS2X_lib.cpp
+#define MSG_ENTER_CONFIG {0x01, 0x43, 0x00, 0x01, 0x00}
+#define MSG_SET_MODE {0x01, 0x44, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00}
+#define MSG_SET_BYTES_LARGE {0x01, 0x4F, 0x00, 0xFF, 0xFF, 0x03, 0x00, 0x00, 0x00}
+#define MSG_EXIT_CONFIG {0x01, 0x43, 0x00, 0x00, 0x5A,0x5A, 0x5A, 0x5A, 0x5A}
 
 static void *dance_controller_poll_thread(void *ctx)
 {
@@ -20,6 +26,7 @@ static void *dance_controller_poll_thread(void *ctx)
     unsigned char data2[PACKET_SIZE];
     struct timeval tv = {0, TIMEOUT};
 
+    // Read the inputs as they come
     int flag = 1;
     while (flag) {
         int completed;
@@ -29,12 +36,12 @@ static void *dance_controller_poll_thread(void *ctx)
             flag = 0;
         }
 
-        int transfered = 0;
-        r = libusb_interrupt_transfer(cont->handle, READ_ENDPOINT, data, sizeof(data), &transfered, TIMEOUT);
+        int transferred = 0;
+        r = libusb_interrupt_transfer(cont->handle, READ_ENDPOINT, data, sizeof(data), &transferred, TIMEOUT);
         if (r == 0) {
             if (memcmp(data, data2, sizeof(data)) != 0) {
                 lprintf(LOG_INFO, "Found new data, that is different: ");
-                for (int i = 0; i < transfered; i++) {
+                for (int i = 0; i < transferred; i++) {
                     fprintf(stderr, "%02x", (int) data[i]);
                     if (i % 8 == 0) {
                         fprintf(stderr, ",");
@@ -84,6 +91,42 @@ int init_dance_controller(dance_controller_t *cont)
     if (r != 0) {
         lprintf(LOG_ERROR, "Cannot claim interface (%s)\n", libusb_strerror(r));
         lprintf(LOG_INFO, "You can try 'systemctl stop xboxdrv' to free the device\n");
+        return 0;
+    }
+
+    // Set the controller up
+    lprintf(LOG_INFO, "Setting controller up\n");
+
+    // Enter config
+    unsigned char enter_config[] = MSG_ENTER_CONFIG;
+    int transferred = 0;
+    r = libusb_interrupt_transfer(cont->handle, WRITE_ENDPOINT, enter_config, sizeof(enter_config), &transferred, TIMEOUT);
+    if (r != 0) {
+        lprintf(LOG_ERROR, "Cannot enter controller config (%s)\n", libusb_strerror(r));
+        return 0;
+    }
+
+    // Set mode
+    unsigned char set_mode[] = MSG_SET_MODE;
+    r = libusb_interrupt_transfer(cont->handle, WRITE_ENDPOINT, set_mode, sizeof(set_mode), &transferred, TIMEOUT);
+    if (r != 0) {
+        lprintf(LOG_ERROR, "Cannot set controller mode (%s)\n", libusb_strerror(r));
+        return 0;
+    }
+
+    // Enable pressuers
+    unsigned char set_bytes_large[] = MSG_SET_BYTES_LARGE;
+    r = libusb_interrupt_transfer(cont->handle, WRITE_ENDPOINT, set_bytes_large, sizeof(set_bytes_large), &transferred, TIMEOUT);
+    if (r != 0) {
+        lprintf(LOG_ERROR, "Cannot set controller bytes (%s)\n", libusb_strerror(r));
+        return 0;
+    }
+
+    // Exit config
+    unsigned char exit_config[] = MSG_EXIT_CONFIG;
+    r = libusb_interrupt_transfer(cont->handle, WRITE_ENDPOINT, exit_config, sizeof(exit_config), &transferred, TIMEOUT);
+    if (r != 0) {
+        lprintf(LOG_ERROR, "Cannot exit controller config (%s)\n", libusb_strerror(r));
         return 0;
     }
 

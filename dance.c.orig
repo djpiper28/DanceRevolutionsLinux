@@ -13,13 +13,20 @@
 #define TIMEOUT 50
 #define PACKET_SIZE (8 * 8)
 
+// Config stuffs
+#define MSG_ENTER_CONFIG {0x01, 0x43, 0x00, 0x01, 0x00}
+#define MSG_SET_MODE {0x01, 0x44, 0x00, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00}
+#define MSG_SET_BYTES_LARGE {0x01, 0x4F, 0x00, 0xFF, 0xFF, 0x03, 0x00, 0x00, 0x00}
+#define MSG_EXIT_CONFIG {0x01, 0x43, 0x00, 0x00, 0x5A,0x5A, 0x5A, 0x5A, 0x5A}
+
 static void *dance_controller_poll_thread(void *ctx)
 {
     dance_controller_t *cont = (dance_controller_t *) ctx;
     unsigned char data[PACKET_SIZE];
-    unsigned char data_last[PACKET_SIZE];
+    unsigned char data2[PACKET_SIZE];
     struct timeval tv = {0, TIMEOUT};
 
+    // Read the inputs as they come
     int flag = 1;
     while (flag) {
         int completed;
@@ -29,24 +36,29 @@ static void *dance_controller_poll_thread(void *ctx)
             flag = 0;
         }
 
-        int transfered = 0;
-        r = libusb_interrupt_transfer(cont->handle, READ_ENDPOINT, data, sizeof(data), &transfered, TIMEOUT);
+        int transferred = 0;
+        r = libusb_interrupt_transfer(cont->handle, READ_ENDPOINT, data, sizeof(data), &transferred, TIMEOUT);
         if (r == 0) {
             if (memcmp(data, data2, sizeof(data)) != 0) {
-            lprintf(LOG_INFO, "Found new data, that is different: ");
-            for (int i = 0; i < transfered; i++) {
-                fprintf(stderr, "%02x", (int) data[i]);
-                if (i % 8 == 0) {
-                    fprintf(stderr, ",");
+                lprintf(LOG_INFO, "Found new data, that is different: ");
+                for (int i = 0; i < transferred; i++) {
+                    fprintf(stderr, "%02x", (int) data[i]);
+                    if (i % 8 == 0) {
+                        fprintf(stderr, ",");
+                    }
                 }
+                fprintf(stderr, "\n");
+                memcpy(data2, data, sizeof(data));
             }
-            fprintf(stderr, "\n");
-          memcpy(data2, data, sizeof(data));
-      }
         } else if (r != LIBUSB_ERROR_TIMEOUT) {
             lprintf(LOG_ERROR, "Cannot read transfer data from device (%s)\n", libusb_strerror(r));
+            flag = 0;
         }
     }
+
+    pthread_mutex_lock(&cont->lock);
+    cont->running = 0;
+    pthread_mutex_unlock(&cont->lock);
 
     pthread_exit(NULL);
     return NULL;
@@ -70,7 +82,7 @@ int init_dance_controller(dance_controller_t *cont)
     }
     lprintf(LOG_INFO, "Device found, trying to connect\n");
 
-    r = libusb_set_auto_detach_kernel_driver(cont->handle, INTERFACE);
+    r = libusb_detach_kernel_driver(cont->handle, INTERFACE);
     if (r != 0) {
         lprintf(LOG_WARNING, "Cannot detach kernel driver (%s)\n", libusb_strerror(r));
     }
@@ -79,6 +91,54 @@ int init_dance_controller(dance_controller_t *cont)
     if (r != 0) {
         lprintf(LOG_ERROR, "Cannot claim interface (%s)\n", libusb_strerror(r));
         lprintf(LOG_INFO, "You can try 'systemctl stop xboxdrv' to free the device\n");
+        return 0;
+    }
+  
+    // Set the controller up
+    lprintf(LOG_INFO, "Setting controller up\n");
+
+    // Enter config    
+    unsigned char enter_config[] = MSG_ENTER_CONFIG;
+    int transferred = 0;
+    r = libusb_interrupt_transfer(cont->handle, WRITE_ENDPOINT, enter_config, sizeof(enter_config), &transferred, TIMEOUT);
+    if (r != 0) {
+        lprintf(LOG_ERROR, "Cannot enter controller config (%s)\n", libusb_strerror(r));
+        return 0;
+    }
+        
+    // Set mode
+    unsigned char set_mode[] = MSG_SET_MODE;
+    r = libusb_interrupt_transfer(cont->handle, WRITE_ENDPOINT, set_mode, sizeof(set_mode), &transferred, TIMEOUT);
+    if (r != 0) {
+        lprintf(LOG_ERROR, "Cannot set controller mode (%s)\n", libusb_strerror(r));
+        return 0;
+    }
+    
+    // Enable pressuers
+    r = libusb_interrupt_transfer(cont->handle, WRITE_ENDPOINT, enter_config, sizeof(enter_config), &transferred, TIMEOUT);
+    if (r != 0) {
+        lprintf(LOG_ERROR, "Cannot enter controller config (%s)\n", libusb_strerror(r));
+        return 0;
+    }
+
+    unsigned char set_bytes_large[] = MSG_SET_BYTES_LARGE;
+    r = libusb_interrupt_transfer(cont->handle, WRITE_ENDPOINT, set_bytes_large, sizeof(set_bytes_large), &transferred, TIMEOUT);
+    if (r != 0) {
+        lprintf(LOG_ERROR, "Cannot exit controller config (%s)\n", libusb_strerror(r));
+        return 0;
+    }
+
+    unsigned char exit_config[] = MSG_EXIT_CONFIG;
+    r = libusb_interrupt_transfer(cont->handle, WRITE_ENDPOINT, exit_config, sizeof(exit_config), &transferred, TIMEOUT);
+    if (r != 0) {
+        lprintf(LOG_ERROR, "Cannot exit controller config (%s)\n", libusb_strerror(r));
+        return 0;
+    }
+    
+    // Exit config
+    r = libusb_interrupt_transfer(cont->handle, WRITE_ENDPOINT, exit_config, sizeof(exit_config), &transferred, TIMEOUT);
+    if (r != 0) {
+        lprintf(LOG_ERROR, "Cannot exit controller config (%s)\n", libusb_strerror(r));
         return 0;
     }
 
@@ -91,6 +151,7 @@ int init_dance_controller(dance_controller_t *cont)
         return 0;
     }
 
+    cont->running = 1;
     lprintf(LOG_INFO, "Device connected, thread is polling\n");
 
     return 1;
@@ -98,10 +159,13 @@ int init_dance_controller(dance_controller_t *cont)
 
 int dance_controller_state(dance_controller_t *cont, int *cont_state)
 {
-    int ret = 0;
+    int ret = 1;
 
     pthread_mutex_lock(&cont->lock);
-    ret = cont->state;
+    *cont_state = cont->state;
+    if (cont->running == 0) {
+        ret = 0;
+    }
     pthread_mutex_unlock(&cont->lock);
 
     return ret;
